@@ -1,6 +1,6 @@
 # MDRRMO Incident REST API
 
-A PHP REST API for the MDRRMO Constituents Website. It receives emergency incident reports, validates the submitted data, and stores incident details and map coordinates in PostgreSQL with PostGIS.
+A PHP backend for the MDRRMO Constituents Website. The API accepts emergency incident reports, validates the submitted values, and stores reports with geographic coordinates in PostgreSQL/PostGIS.
 
 ## Repository structure
 
@@ -28,86 +28,134 @@ mdrrmo-api/
 
 ## Requirements
 
-- PHP 8.3 with PDO PostgreSQL (pdo_pgsql) and mbstring, or Docker
-- PostgreSQL with the PostGIS extension
-- Git and a GitHub account for deployment
+- PHP 8.3 with pdo_pgsql and mbstring, or Docker
+- PostgreSQL with the PostGIS extension enabled
+- psql for creating the database table
+- A GitHub account and a Render account for deployment
 
 ## 1. Configure the database
 
-Create a PostgreSQL database. Copy .env.example to .env and replace its example values with your database settings. The .env file contains credentials; keep it private and do not commit it. When running the Docker image locally, Docker reads the file with --env-file.
+Create a PostgreSQL database. The database server must support PostGIS. Render PostgreSQL supports the extension; after connecting to the database, the schema script enables it and creates the incidents table and indexes.
 
-The app accepts either DATABASE_URL or the separate DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, and optional DB_SSLMODE variables. Render should use the database's Internal Database URL for DATABASE_URL.
+The API reads either a PostgreSQL connection URL or individual database settings:
 
-Create the PostGIS extension and incidents table by applying src/schema.sql to your database. For example, from PowerShell with DATABASE_URL set:
+- DATABASE_URL — connection URL, recommended on Render
+- DB_HOST
+- DB_PORT — usually 5432
+- DB_NAME
+- DB_USER
+- DB_PASSWORD
+
+For local development, copy .env.example to .env and replace its sample values with your local database settings. Keep .env private; it is ignored by Git. Never put a real password or connection URL in .env.example or commit it to GitHub.
+
+To create the database schema from PowerShell, set your actual connection URL, then run:
 
 ~~~powershell
-psql $env:DATABASE_URL -f .srcschema.sql
+$env:DATABASE_URL = "postgresql://USER:PASSWORD@HOST:PORT/DATABASE?sslmode=require"
+psql $env:DATABASE_URL -f src/schema.sql
 ~~~
 
-You can also run the SQL in src/schema.sql using your PostgreSQL client. Render Postgres supports PostGIS; see the [Render Postgres extension guide](https://render.com/docs/postgresql-extensions).
+Use the database's real connection details in the command. On Render, use the Internal Database URL when the web service and database are in the same Render region. Add it as the web service environment variable named DATABASE_URL.
 
-The schema creates an incidents table with reporter/contact details, incident type, description, optional barangay and address, a geographic point, a status, and created/updated timestamps. Allowed statuses are pending, verified, responding, resolved, and cancelled.
+## 2. Build and run with Docker
 
-## 2. Run locally with Docker
-
-From the repository root, after filling in .env and applying the schema:
+From the repository root, build the image:
 
 ~~~powershell
 docker build -t mdrrmo-api .
+~~~
+
+Run it locally using your private .env file:
+
+~~~powershell
 docker run --rm --env-file .env -p 10000:10000 mdrrmo-api
 ~~~
 
-The API will be available at http://localhost:10000. The Dockerfile serves the public directory and listens on port 10000.
+The API will be available at http://localhost:10000. The container serves the public folder and listens on port 10000.
 
 ## 3. API endpoints
 
-All endpoints return JSON.
+All responses use JSON.
 
-| Method | Endpoint | Purpose |
-| --- | --- | --- |
-| GET | /api/health.php | Check the API, PostgreSQL connection, and PostGIS |
-| POST | /api/incidents/create.php | Validate and save a new emergency report |
-| GET | /api/incidents/list.php | List reports; supports limit, offset, and status query parameters |
-| GET | /api/incidents/view.php?id=1 | Fetch one report by its ID |
+### Check the API and database
 
-Example: check service health and list the most recent reports.
-
-~~~text
-http://localhost:10000/api/health.php
-http://localhost:10000/api/incidents/list.php?limit=20&offset=0
+~~~http
+GET /api/health.php
 ~~~
 
-Create a report by sending JSON. reporter_name, contact_number, incident_type, description, latitude, and longitude are required. Coordinates must be valid latitude/longitude values. barangay and address are optional.
+### Create an incident report
+
+~~~http
+POST /api/incidents/create.php
+Content-Type: application/json
+~~~
+
+Required JSON fields: reporter_name, contact_number, incident_type, description, latitude, and longitude. The barangay and address fields are optional. Latitude must be between -90 and 90; longitude must be between -180 and 180.
+
+PowerShell example:
 
 ~~~powershell
 $body = @{
   reporter_name = "Juan Dela Cruz"
   contact_number = "09171234567"
-  incident_type = "Flooding"
-  description = "Flood water is rising near the bridge."
-  barangay = "Example Barangay"
-  address = "Near the public bridge"
-  latitude = 10.3157
-  longitude = 123.8854
+  incident_type = "Flood"
+  description = "Flooding near the bridge."
+  barangay = "Poblacion"
+  address = "Near the municipal bridge"
+  latitude = 10.1234
+  longitude = 124.5678
 } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:10000/api/incidents/create.php" -Method Post -ContentType "application/json" -Body $body
+
+$request = @{
+  Method = "Post"
+  Uri = "http://localhost:10000/api/incidents/create.php"
+  ContentType = "application/json"
+  Body = $body
+}
+Invoke-RestMethod @request
 ~~~
 
-The create endpoint returns HTTP 201 when a report is saved. Invalid input receives a JSON error response. Use the returned incident id with the view endpoint.
+A successful create request returns HTTP 201 with the new incident data. Invalid values return an error response.
+
+### List incident reports
+
+~~~http
+GET /api/incidents/list.php?limit=20&offset=0
+~~~
+
+Optional query parameters are limit, offset, and status.
+
+### View one incident report
+
+~~~http
+GET /api/incidents/view.php?id=1
+~~~
+
+Replace 1 with the report's database ID. An invalid ID returns HTTP 400; a report that does not exist returns HTTP 404.
 
 ## 4. Deploy on Render
 
-1. Push this repository to GitHub and create a PostgreSQL database on Render.
-2. Apply src/schema.sql to that database so PostGIS and the incidents table are ready.
-3. In Render, create a Web Service connected to pitogo143/mdrrmo-api, select the main branch, and choose the Docker runtime. Render will build the repository's Dockerfile.
-4. In the web service's Environment settings, add DATABASE_URL and set it to the database's Internal Database URL. Keep this value in Render's environment settings; never place it in GitHub files.
-5. Deploy the service. You can set /api/health.php as the health check path after the database schema has been applied.
-6. Check https://<your-service-name>.onrender.com/api/health.php, then use the deployed base URL for the website's API requests.
+1. Push this repository to GitHub.
+2. In Render, choose New then Web Service, and connect pitogo143/mdrrmo-api.
+3. Select the main branch and choose the Docker runtime. Keep the Dockerfile path at ./Dockerfile.
+4. Create or select a PostgreSQL database with PostGIS support.
+5. In the web service's Environment settings, add DATABASE_URL and paste the database's Internal Database URL.
+6. Deploy the web service. When deployment finishes, open https://YOUR-SERVICE.onrender.com/api/health.php to check the API and database connection.
 
-## Database connection check
+If deployment reports a database or PostGIS error, confirm the database is ready, the DATABASE_URL value is correct, and src/schema.sql has been run against that database.
 
-test-db.php is a command-line helper that checks the configured PostgreSQL connection and PostGIS. Run it in an environment where the database variables are available. It is not a public web endpoint.
+## 5. Check database setup from the command line
 
-## Notes
+With DATABASE_URL configured, run:
 
-This repository contains the backend API. The website frontend remains a separate application and should send its emergency report form to the deployed POST /api/incidents/create.php endpoint with a JSON request body.
+~~~powershell
+php test-db.php
+~~~
+
+This script checks the connection, PostGIS, and the incidents table. It is a command-line utility and is not a public API endpoint.
+
+## Security notes
+
+- Keep real database credentials in local .env files or Render environment settings; never commit them.
+- The API validates input and uses parameterized database queries.
+- Configure the frontend's allowed origin more narrowly before using this API for a production public website.
