@@ -30,9 +30,9 @@ if ($id === false || $id === null || $id < 1) {
 
 try {
     $pdo = require __DIR__ . '/../../../src/db_connection.php';
-    $sql = 'SELECT id, reporter_name, contact_number, incident_type, description,
-                   barangay, address, status, created_at, updated_at,
-                   ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude
+    $sql = 'SELECT id, incident_type, barangay, status, created_at, updated_at,
+                   ROUND(ST_Y(location::geometry)::numeric, 2) AS latitude,
+                   ROUND(ST_X(location::geometry)::numeric, 2) AS longitude
             FROM incidents
             WHERE id = :id';
     $stmt = $pdo->prepare($sql);
@@ -48,3 +48,4 @@ try {
     error_log('Incident view failed: ' . $e->getMessage());
     json_response(['success' => false, 'error' => 'Could not load incident report. Check database setup.'], 500);
 }
+

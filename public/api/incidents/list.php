@@ -30,9 +30,9 @@ try {
     $offset = max(0, $offset === false ? 0 : $offset);
     $status = isset($_GET['status']) && is_string($_GET['status']) ? trim($_GET['status']) : '';
 
-    $sql = 'SELECT id, reporter_name, contact_number, incident_type, description,
-                   barangay, address, status, created_at, updated_at,
-                   ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude
+    $sql = 'SELECT id, incident_type, barangay, status, created_at, updated_at,
+                   ROUND(ST_Y(location::geometry)::numeric, 2) AS latitude,
+                   ROUND(ST_X(location::geometry)::numeric, 2) AS longitude
             FROM incidents';
     $params = [];
     if ($status !== '') {
@@ -63,3 +63,4 @@ try {
     error_log('Incident list failed: ' . $e->getMessage());
     json_response(['success' => false, 'error' => 'Could not load incident reports. Check database setup.'], 500);
 }
+
